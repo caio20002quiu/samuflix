@@ -1,0 +1,33 @@
+.app-splash{
+  position:fixed;
+  inset:0;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  background: linear-gradient(180deg,#e94d47, #c40803);
+  color:#fff;
+  z-index:9999;
+}
+
+.app-splash-content{
+  text-align:center;
+}
+
+.app-splash-logo{
+  width:120px;
+  height:120px;
+  object-fit:contain;
+  margin-bottom:16px;
+  filter: drop-shadow(0 6px 10px rgba(0,0,0,0.4));
+}
+
+.app-splash h1{
+  margin:0;
+  font-size:28px;
+  letter-spacing:1px;
+}
+
+.app-splash p{
+  margin-top:8px;
+  opacity:0.9;
+}
