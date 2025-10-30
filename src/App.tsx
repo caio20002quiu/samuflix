@@ -11,10 +11,11 @@ import {
   setupIonicReact
 } from '@ionic/react';
 import { IonReactRouter } from '@ionic/react-router';
-import { play, add, people } from 'ionicons/icons';
+import { play, videocam, heart, chatbubbles } from 'ionicons/icons';
 import Gravacao from './pages/Gravacao';
 import Galeria from './pages/Galeria';
 import Mensagens from './pages/Mensagens';
+import Favoritos from './pages/Favoritos';
 
 /* Core CSS required for Ionic components to work properly */
 import '@ionic/react/css/core.css';
@@ -75,6 +76,9 @@ const App: React.FC = () => {
               <Route exact path="/gravacao">
                 <Gravacao />
               </Route>
+              <Route exact path="/favoritos">
+                <Favoritos />
+              </Route>
               <Route path="/mensagens">
                 <Mensagens />
               </Route>
@@ -85,15 +89,19 @@ const App: React.FC = () => {
             <IonTabBar slot="bottom">
               <IonTabButton tab="galeria" href="/galeria">
                 <IonIcon aria-hidden="true" icon={play} />
-                <IonLabel>Últimos Vídeos</IonLabel>
+                <IonLabel>Últimos vídeos</IonLabel>
               </IonTabButton>
-              <IonTabButton tab="tab2" href="/gravacao">
-                <IonIcon aria-hidden="true" icon={add} />
-                <IonLabel>Enviar Vídeo</IonLabel>
+              <IonTabButton tab="gravacao" href="/gravacao">
+                <IonIcon aria-hidden="true" icon={videocam} />
+                <IonLabel>Gravar vídeo</IonLabel>
               </IonTabButton>
-              <IonTabButton tab="tab3" href="/mensagens">
-                <IonIcon aria-hidden="true" icon={people} />
-                <IonLabel>Mensagens</IonLabel>
+              <IonTabButton tab="favoritos" href="/favoritos">
+                <IonIcon aria-hidden="true" icon={heart} />
+                <IonLabel>Meus favoritos</IonLabel>
+              </IonTabButton>
+              <IonTabButton tab="mensagens" href="/mensagens">
+                <IonIcon aria-hidden="true" icon={chatbubbles} />
+                <IonLabel>Minhas mensagens</IonLabel>
               </IonTabButton>
             </IonTabBar>
           </IonTabs>

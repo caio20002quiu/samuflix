@@ -1,4 +1,6 @@
-import { IonContent, IonHeader, IonPage, IonTitle, IonToolbar, IonModal, IonButtons, IonButton } from '@ionic/react';
+import { IonContent, IonHeader, IonPage, IonTitle, IonToolbar, IonModal, IonButtons, IonButton, IonIcon } from '@ionic/react';
+import { heartOutline, heart } from 'ionicons/icons';
+import { firebaseAvailable, saveFavorite, removeFavorite } from '../firebase';
 import { fetchVideosFromFirestore, firebaseAvailable } from '../firebase';
 
 import React from 'react';
@@ -56,6 +58,7 @@ const Galeria: React.FC = () => {
     
   const [videos, setVideos] = React.useState<Video[]>(MOCK_VIDEOS);
   const [selectedVideo, setSelectedVideo] = React.useState<Video | null>(null);
+  const [favoriteIds, setFavoriteIds] = React.useState<Set<string>>(new Set());
 
   React.useEffect(() => {
     (async () => {
@@ -76,11 +79,14 @@ const Galeria: React.FC = () => {
       try {
 
         const { Preferences } = await import('@capacitor/preferences');
-        const { value } = await Preferences.get({ key: 'videos' });
+        const [{ value: savedVideosValue }, { value: favValue }] = await Promise.all([
+          Preferences.get({ key: 'videos' }),
+          Preferences.get({ key: 'favorites' })
+        ]);
 
-        if (value) {
+        if (savedVideosValue) {
 
-          const saved = JSON.parse(value) as any[];
+          const saved = JSON.parse(savedVideosValue) as any[];
           
           const savedVideos: Video[] = saved.map(s => ({
             id: s.id,
@@ -93,6 +99,13 @@ const Galeria: React.FC = () => {
           setVideos(prev => [...savedVideos, ...prev]);
 
         }
+
+        if (favValue) {
+          try {
+            const favs: string[] = JSON.parse(favValue);
+            setFavoriteIds(new Set(favs));
+          } catch { /* ignore */ }
+        }
       } catch (e) {
         // ignore
       }
@@ -104,6 +117,36 @@ const Galeria: React.FC = () => {
   const formatDate = (ts: number) => new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' }).format(new Date(ts));
   const openVideo = (v: Video) => setSelectedVideo(v);
   const closeVideo = () => setSelectedVideo(null);
+
+  const isFavorite = (id: string) => favoriteIds.has(id);
+  const toggleFavorite = async (video: Video) => {
+    const next = new Set(favoriteIds);
+    if (next.has(video.id)) next.delete(video.id); else next.add(video.id);
+    setFavoriteIds(next);
+    try {
+      const { Preferences } = await import('@capacitor/preferences');
+      await Preferences.set({ key: 'favorites', value: JSON.stringify(Array.from(next)) });
+      // ensure we also cache the favorite objects for a standalone Favoritos tela
+      const { value } = await Preferences.get({ key: 'favoriteItems' });
+      const map: Record<string, Video> = value ? JSON.parse(value) : {};
+      map[video.id] = video;
+      await Preferences.set({ key: 'favoriteItems', value: JSON.stringify(map) });
+      // sync Firebase when disponível
+      if (firebaseAvailable()) {
+        const { value: dv } = await Preferences.get({ key: 'deviceId' });
+        let deviceId = dv || '';
+        if (!deviceId) {
+          deviceId = String(Date.now()) + '-' + Math.random().toString(36).slice(2);
+          await Preferences.set({ key: 'deviceId', value: deviceId });
+        }
+        if (next.has(video.id)) {
+          await saveFavorite(deviceId, { userId: deviceId, videoId: video.id, title: video.title, thumbUrl: video.thumb, mediaUrl: video.media, publishedAt: video.publishedAt });
+        } else {
+          await removeFavorite(deviceId, video.id);
+        }
+      }
+    } catch { /* ignore */ }
+  };
 
   return (
     <IonPage>
@@ -151,6 +194,12 @@ const Galeria: React.FC = () => {
                 <div style={{ padding: 12 }}>
                   <div style={{ fontWeight: 700 }}>{selectedVideo.title}</div>
                   <div style={{ color: 'var(--ion-color-medium)', marginTop: 6 }}>Publicado em {formatDate(selectedVideo.publishedAt)}</div>
+                  <div style={{ marginTop: 12 }}>
+                    <IonButton onClick={() => selectedVideo && toggleFavorite(selectedVideo)} fill="outline">
+                      <IonIcon icon={isFavorite(selectedVideo!.id) ? heart : heartOutline} slot="start" />
+                      {isFavorite(selectedVideo!.id) ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}
+                    </IonButton>
+                  </div>
                 </div>
               </div>
             )}

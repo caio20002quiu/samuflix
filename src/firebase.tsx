@@ -1,6 +1,6 @@
 import { initializeApp, getApps } from 'firebase/app';
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { getFirestore, collection, addDoc, getDocs, query, orderBy } from 'firebase/firestore';
+import { getFirestore, collection, addDoc, getDocs, query, orderBy, where, deleteDoc, doc } from 'firebase/firestore';
 
 // Model
 type FirebaseVideo = {
@@ -97,4 +97,68 @@ export async function fetchVideosFromFirestore(): Promise<FirebaseVideo[]> {
 
 export function firebaseAvailable() {
   return initIfPossible();
+}
+
+// -------------------- Favoritos --------------------
+type FavoriteDoc = { userId: string; videoId: string; title: string; thumbUrl: string; mediaUrl: string; publishedAt: number };
+
+export async function saveFavorite(userId: string, item: FavoriteDoc) {
+  if (!appInitialized) initIfPossible();
+  if (!firestore) throw new Error('Firestore not initialized');
+  const col = collection(firestore, 'favorites');
+  await addDoc(col, item as any);
+}
+
+export async function removeFavorite(userId: string, videoId: string) {
+  if (!appInitialized) initIfPossible();
+  if (!firestore) throw new Error('Firestore not initialized');
+  const col = collection(firestore, 'favorites');
+  const q = query(col, where('userId', '==', userId), where('videoId', '==', videoId));
+  const snap = await getDocs(q);
+  const promises: Promise<void>[] = [];
+  snap.forEach(dref => {
+    promises.push(deleteDoc(doc(firestore!, 'favorites', dref.id)) as any);
+  });
+  await Promise.all(promises);
+}
+
+export async function fetchFavoritesByUser(userId: string): Promise<FirebaseVideo[]> {
+  if (!appInitialized) initIfPossible();
+  if (!firestore) throw new Error('Firestore not initialized');
+  const col = collection(firestore, 'favorites');
+  const q = query(col, where('userId', '==', userId), orderBy('publishedAt', 'desc'));
+  const snap = await getDocs(q);
+  const out: FirebaseVideo[] = [];
+  snap.forEach(d => {
+    const data = d.data() as any;
+    out.push({
+      id: data.videoId,
+      title: data.title || '',
+      thumbUrl: data.thumbUrl || '',
+      publishedAt: data.publishedAt || Date.now(),
+      mediaUrl: data.mediaUrl || ''
+    });
+  });
+  return out;
+}
+
+// -------------------- Mensagens --------------------
+type MessageDoc = { userId: string; text: string; createdAt: number };
+
+export async function saveMessage(userId: string, text: string) {
+  if (!appInitialized) initIfPossible();
+  if (!firestore) throw new Error('Firestore not initialized');
+  const col = collection(firestore, 'messages');
+  await addDoc(col, { userId, text, createdAt: Date.now() } as MessageDoc as any);
+}
+
+export async function fetchMessagesByUser(userId: string): Promise<MessageDoc[]> {
+  if (!appInitialized) initIfPossible();
+  if (!firestore) throw new Error('Firestore not initialized');
+  const col = collection(firestore, 'messages');
+  const q = query(col, where('userId', '==', userId), orderBy('createdAt', 'desc'));
+  const snap = await getDocs(q);
+  const out: MessageDoc[] = [];
+  snap.forEach(d => out.push(d.data() as any));
+  return out;
 }
