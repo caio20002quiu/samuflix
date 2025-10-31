@@ -1,5 +1,6 @@
 import { IonContent, IonHeader, IonPage, IonTitle, IonToolbar, IonButton, IonInput, IonItem, IonLabel } from '@ionic/react';
-import { uploadVideoBlob, uploadDataUrlAsFile, saveVideoMetadata, firebaseAvailable } from '../firebase';
+import { uploadVideoBlob, uploadDataUrlAsFile, saveVideoMetadata } from '../firebase';
+import { generateThumbnailFromBlob } from '../utils/videoThumbnail';
 import React from 'react';
 import './Gravacao.css';
 
@@ -90,53 +91,32 @@ const Gravacao: React.FC = () => {
                 let mediaUrl = '';
                 let thumbUrl = '';
 
-                // try to use Firebase if available
-                if (firebaseAvailable()) {
-                    try {
-                        // upload video blob
-                        mediaUrl = await uploadVideoBlob(id, blob, blob.type || 'video/webm');
+                // Usar MongoDB Atlas para salvar
+                try {
+                    // upload video blob
+                    mediaUrl = await uploadVideoBlob(id, blob, blob.type || 'video/webm');
 
-                        // create thumbnail by drawing first frame
-                        const thumbDataUrl = await new Promise<string>((res) => {
-                            const v = document.createElement('video');
-                            v.src = URL.createObjectURL(blob);
-                            v.muted = true;
-                            v.playsInline = true;
-                            v.addEventListener('loadeddata', () => {
-                                try {
-                                    const canvas = document.createElement('canvas');
-                                    canvas.width = v.videoWidth || 320;
-                                    canvas.height = v.videoHeight || 180;
-                                    const ctx = canvas.getContext('2d');
-                                    if (ctx) ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
-                                    res(canvas.toDataURL('image/png'));
-                                } catch (e) {
-                                    res('');
-                                }
-                            });
-                            // fallback if loadeddata doesn't fire
-                            setTimeout(() => res(''), 2000);
-                        });
+                    // Gerar thumbnail do primeiro frame usando função utilitária
+                    const thumbDataUrl = await generateThumbnailFromBlob(blob);
 
-                        if (thumbDataUrl) {
-                            try {
-                                thumbUrl = await uploadDataUrlAsFile(id, thumbDataUrl, 'png');
-                            } catch (e) {
-                                console.warn('Thumbnail upload failed', e);
-                            }
+                    if (thumbDataUrl) {
+                        try {
+                            thumbUrl = await uploadDataUrlAsFile(id, thumbDataUrl, 'png');
+                        } catch (e) {
+                            console.warn('Thumbnail upload failed', e);
                         }
-
-                        // save metadata to Firestore
-                        await saveVideoMetadata({ id, title, mediaUrl, thumbUrl, publishedAt: Date.now() });
-                        alert('Gravação salva no Firebase!');
-
-                        // cleanup
-                        setTimeout(() => { if (blobUrl) { URL.revokeObjectURL(blobUrl); setBlobUrl(null); } }, 5000);
-                        return;
-                    } catch (e) {
-                        console.warn('Firebase saving failed, falling back to Preferences', e);
-                        // fallthrough to local save
                     }
+
+                    // save metadata to MongoDB
+                    await saveVideoMetadata({ id, title, mediaUrl, thumbUrl, publishedAt: Date.now() });
+                    alert('Gravação salva no MongoDB Atlas!');
+
+                    // cleanup
+                    setTimeout(() => { if (blobUrl) { URL.revokeObjectURL(blobUrl); setBlobUrl(null); } }, 5000);
+                    return;
+                } catch (e) {
+                    console.warn('MongoDB saving failed, falling back to Preferences', e);
+                    // fallthrough to local save
                 }
 
 

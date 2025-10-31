@@ -1,9 +1,20 @@
-import { initializeApp, getApps } from 'firebase/app';
-import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { getFirestore, collection, addDoc, getDocs, query, orderBy, where, deleteDoc, doc } from 'firebase/firestore';
+// Este arquivo foi refatorado para usar MongoDB Atlas ao invés de Firebase
+// Todas as funções agora chamam a API do MongoDB Atlas
+
+import { 
+  fetchVideosFromApi, 
+  saveVideoApi, 
+  uploadVideoApi, 
+  uploadThumbApi,
+  saveFavoriteApi, 
+  removeFavoriteApi, 
+  fetchFavoritesByUserApi,
+  saveMessageApi,
+  fetchMessagesByUserApi
+} from './api';
 
 // Model
-type FirebaseVideo = {
+export type FirebaseVideo = {
   id: string;
   title: string;
   thumbUrl: string;
@@ -11,154 +22,131 @@ type FirebaseVideo = {
   mediaUrl: string; // url do vídeo
 };
 
-// Read config from Vite env variables. Replace in .env with your Firebase config or set env vars in hosting.
-const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID
-};
+// Verifica se a API está disponível (sempre retorna true agora)
+export function firebaseAvailable(): boolean {
+  // Sempre retorna true já que usamos MongoDB Atlas
+  return true;
+}
 
-let appInitialized = false;
-let storage: ReturnType<typeof getStorage> | null = null;
-let firestore: ReturnType<typeof getFirestore> | null = null;
-
-function initIfPossible() {
-  // ensure all required vars are present
-  const ok = firebaseConfig.apiKey && firebaseConfig.projectId && firebaseConfig.storageBucket && firebaseConfig.appId;
-  if (!ok) return false;
-  if (getApps().length === 0) {
-    try {
-      initializeApp(firebaseConfig as any);
-    } catch (e) {
-      console.warn('Firebase initializeApp failed', e);
-      return false;
-    }
-  }
+// Upload de vídeo via API MongoDB
+export async function uploadVideoBlob(id: string, blob: Blob, contentType = 'video/webm'): Promise<string> {
   try {
-    storage = getStorage();
-    firestore = getFirestore();
-    appInitialized = true;
-    return true;
-  } catch (e) {
-    console.warn('Firebase services init failed', e);
-    return false;
+    const filename = `video-${id}.${contentType.split('/')[1] || 'webm'}`;
+    return await uploadVideoApi(blob, filename);
+  } catch (error: any) {
+    console.error('Erro ao fazer upload do vídeo:', error);
+    throw new Error(`Falha ao fazer upload: ${error?.message || error}`);
   }
 }
 
-export async function uploadVideoBlob(id: string, blob: Blob, contentType = 'video/webm') {
-  if (!appInitialized) initIfPossible();
-  if (!storage) throw new Error('Firebase Storage not initialized');
-  const ref = storageRef(storage, `videos/${id}`);
-  const metadata = { contentType };
-  await uploadBytes(ref, blob, metadata);
-  return getDownloadURL(ref);
+// Upload de thumbnail via API MongoDB
+export async function uploadDataUrlAsFile(id: string, dataUrl: string, ext = 'png'): Promise<string> {
+  try {
+    // Converter dataURL para blob
+    const res = await fetch(dataUrl);
+    const blob = await res.blob();
+    const filename = `thumb-${id}.${ext}`;
+    return await uploadThumbApi(blob, filename);
+  } catch (error: any) {
+    console.error('Erro ao fazer upload da thumbnail:', error);
+    throw new Error(`Falha ao fazer upload da thumbnail: ${error?.message || error}`);
+  }
 }
 
-export async function uploadDataUrlAsFile(id: string, dataUrl: string, ext = 'png') {
-  if (!appInitialized) initIfPossible();
-  if (!storage) throw new Error('Firebase Storage not initialized');
-  // convert dataURL to blob
-  const res = await fetch(dataUrl);
-  const blob = await res.blob();
-  const ref = storageRef(storage, `thumb/${id}.${ext}`);
-  await uploadBytes(ref, blob);
-  return getDownloadURL(ref);
-}
-
-export async function saveVideoMetadata(item: FirebaseVideo) {
-  if (!appInitialized) initIfPossible();
-  if (!firestore) throw new Error('Firestore not initialized');
-  const col = collection(firestore, 'videos');
-  await addDoc(col, item as any);
-}
-
-export async function fetchVideosFromFirestore(): Promise<FirebaseVideo[]> {
-  if (!appInitialized) initIfPossible();
-  if (!firestore) throw new Error('Firestore not initialized');
-  const col = collection(firestore, 'videos');
-  const q = query(col, orderBy('publishedAt', 'desc'));
-  const snap = await getDocs(q);
-  const out: FirebaseVideo[] = [];
-  snap.forEach(d => {
-    const data = d.data() as any;
-    out.push({
-      id: data.id || d.id,
-      title: data.title || '',
-      thumbUrl: data.thumbUrl || data.thumb || '',
-      publishedAt: data.createdAt || Date.now(),
-      mediaUrl: data.mediaUrl || data.media || ''
+// Salvar metadata do vídeo via API MongoDB
+export async function saveVideoMetadata(item: FirebaseVideo): Promise<void> {
+  try {
+    await saveVideoApi({
+      id: item.id,
+      title: item.title,
+      mediaUrl: item.mediaUrl,
+      thumbUrl: item.thumbUrl,
+      publishedAt: item.publishedAt
     });
-  });
-  return out;
+  } catch (error: any) {
+    console.error('Erro ao salvar metadata do vídeo:', error);
+    throw new Error(`Falha ao salvar metadata: ${error?.message || error}`);
+  }
 }
 
-export function firebaseAvailable() {
-  return initIfPossible();
+// Buscar vídeos via API MongoDB
+export async function fetchVideosFromFirestore(): Promise<FirebaseVideo[]> {
+  try {
+    const videos = await fetchVideosFromApi();
+    return videos.map((v: any) => ({
+      id: v.id || v._id?.toString() || '',
+      title: v.title || '',
+      thumbUrl: v.thumbUrl || v.thumb || '',
+      publishedAt: v.publishedAt || v.createdAt || Date.now(),
+      mediaUrl: v.mediaUrl || v.media || ''
+    }));
+  } catch (error: any) {
+    console.error('Erro ao buscar vídeos:', error);
+    throw new Error(`Falha ao buscar vídeos: ${error?.message || error}`);
+  }
 }
 
 // -------------------- Favoritos --------------------
 type FavoriteDoc = { userId: string; videoId: string; title: string; thumbUrl: string; mediaUrl: string; publishedAt: number };
 
-export async function saveFavorite(userId: string, item: FavoriteDoc) {
-  if (!appInitialized) initIfPossible();
-  if (!firestore) throw new Error('Firestore not initialized');
-  const col = collection(firestore, 'favorites');
-  await addDoc(col, item as any);
+export async function saveFavorite(userId: string, item: FavoriteDoc): Promise<void> {
+  try {
+    await saveFavoriteApi({
+      userId: item.userId,
+      videoId: item.videoId,
+      title: item.title,
+      thumbUrl: item.thumbUrl,
+      mediaUrl: item.mediaUrl,
+      publishedAt: item.publishedAt
+    });
+  } catch (error: any) {
+    console.error('Erro ao salvar favorito:', error);
+    throw new Error(`Falha ao salvar favorito: ${error?.message || error}`);
+  }
 }
 
-export async function removeFavorite(userId: string, videoId: string) {
-  if (!appInitialized) initIfPossible();
-  if (!firestore) throw new Error('Firestore not initialized');
-  const col = collection(firestore, 'favorites');
-  const q = query(col, where('userId', '==', userId), where('videoId', '==', videoId));
-  const snap = await getDocs(q);
-  const promises: Promise<void>[] = [];
-  snap.forEach(dref => {
-    promises.push(deleteDoc(doc(firestore!, 'favorites', dref.id)) as any);
-  });
-  await Promise.all(promises);
+export async function removeFavorite(userId: string, videoId: string): Promise<void> {
+  try {
+    await removeFavoriteApi(userId, videoId);
+  } catch (error: any) {
+    console.error('Erro ao remover favorito:', error);
+    throw new Error(`Falha ao remover favorito: ${error?.message || error}`);
+  }
 }
 
 export async function fetchFavoritesByUser(userId: string): Promise<FirebaseVideo[]> {
-  if (!appInitialized) initIfPossible();
-  if (!firestore) throw new Error('Firestore not initialized');
-  const col = collection(firestore, 'favorites');
-  const q = query(col, where('userId', '==', userId), orderBy('publishedAt', 'desc'));
-  const snap = await getDocs(q);
-  const out: FirebaseVideo[] = [];
-  snap.forEach(d => {
-    const data = d.data() as any;
-    out.push({
-      id: data.videoId,
-      title: data.title || '',
-      thumbUrl: data.thumbUrl || '',
-      publishedAt: data.publishedAt || Date.now(),
-      mediaUrl: data.mediaUrl || ''
-    });
-  });
-  return out;
+  try {
+    const favorites = await fetchFavoritesByUserApi(userId);
+    return favorites.map((f: any) => ({
+      id: f.videoId || f.id || '',
+      title: f.title || '',
+      thumbUrl: f.thumbUrl || '',
+      publishedAt: f.publishedAt || Date.now(),
+      mediaUrl: f.mediaUrl || ''
+    }));
+  } catch (error: any) {
+    console.error('Erro ao buscar favoritos:', error);
+    throw new Error(`Falha ao buscar favoritos: ${error?.message || error}`);
+  }
 }
 
 // -------------------- Mensagens --------------------
 type MessageDoc = { userId: string; text: string; createdAt: number };
 
-export async function saveMessage(userId: string, text: string) {
-  if (!appInitialized) initIfPossible();
-  if (!firestore) throw new Error('Firestore not initialized');
-  const col = collection(firestore, 'messages');
-  await addDoc(col, { userId, text, createdAt: Date.now() } as MessageDoc as any);
+export async function saveMessage(userId: string, text: string): Promise<void> {
+  try {
+    await saveMessageApi(userId, text);
+  } catch (error: any) {
+    console.error('Erro ao salvar mensagem:', error);
+    throw new Error(`Falha ao salvar mensagem: ${error?.message || error}`);
+  }
 }
 
 export async function fetchMessagesByUser(userId: string): Promise<MessageDoc[]> {
-  if (!appInitialized) initIfPossible();
-  if (!firestore) throw new Error('Firestore not initialized');
-  const col = collection(firestore, 'messages');
-  const q = query(col, where('userId', '==', userId), orderBy('createdAt', 'desc'));
-  const snap = await getDocs(q);
-  const out: MessageDoc[] = [];
-  snap.forEach(d => out.push(d.data() as any));
-  return out;
+  try {
+    return await fetchMessagesByUserApi(userId);
+  } catch (error: any) {
+    console.error('Erro ao buscar mensagens:', error);
+    throw new Error(`Falha ao buscar mensagens: ${error?.message || error}`);
+  }
 }

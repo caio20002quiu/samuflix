@@ -1,5 +1,6 @@
 import { IonContent, IonHeader, IonPage, IonTitle, IonToolbar, IonItem, IonInput, IonButton, IonList } from '@ionic/react';
-import { firebaseAvailable, saveMessage, fetchMessagesByUser } from '../firebase';
+import { saveMessage, fetchMessagesByUser } from '../firebase';
+import { saveMessageApi, fetchMessagesByUserApi } from '../api';
 import React from 'react';
 import './Mensagens.css';
 
@@ -13,19 +14,35 @@ const Mensagens: React.FC = () => {
     (async () => {
       try {
         const { Preferences } = await import('@capacitor/preferences');
-        if (firebaseAvailable()) {
-          const { value: dv } = await Preferences.get({ key: 'deviceId' });
-          let deviceId = dv || '';
-          if (!deviceId) {
-            deviceId = String(Date.now()) + '-' + Math.random().toString(36).slice(2);
-            await Preferences.set({ key: 'deviceId', value: deviceId });
-          }
+        const { value: dv } = await Preferences.get({ key: 'deviceId' });
+        let deviceId = dv || '';
+        if (!deviceId) {
+          deviceId = String(Date.now()) + '-' + Math.random().toString(36).slice(2);
+          await Preferences.set({ key: 'deviceId', value: deviceId });
+        }
+
+        // Carregar mensagens do MongoDB Atlas
+        try {
           const remote = await fetchMessagesByUser(deviceId);
           if (remote.length) {
-            setMessages(remote.map(r => ({ id: String(r.createdAt), text: r.text, createdAt: r.createdAt })));
+            setMessages(remote.map((r, idx) => ({ id: `${r.createdAt}-${idx}-${Math.random().toString(36)}`, text: r.text, createdAt: r.createdAt })));
             return;
           }
+        } catch (e) {
+          // Fallback para API direta
+          try {
+            const remote = await fetchMessagesByUserApi(deviceId);
+            if (remote && remote.length) {
+              setMessages(remote.map((r: any, idx: number) => ({ 
+                id: `${r.createdAt}-${idx}-${Math.random().toString(36)}`, 
+                text: r.text, 
+                createdAt: r.createdAt 
+              })));
+              return;
+            }
+          } catch { /* ignore api errors */ }
         }
+
         const { value } = await Preferences.get({ key: 'messages' });
         if (value) setMessages(JSON.parse(value));
       } catch { /* ignore */ }
@@ -35,21 +52,30 @@ const Mensagens: React.FC = () => {
   const send = async () => {
     const t = text.trim();
     if (!t) return;
-    const item: Msg = { id: String(Date.now()), text: t, createdAt: Date.now() };
+    const now = Date.now();
+    const item: Msg = { id: `${now}-${Math.random().toString(36)}`, text: t, createdAt: now };
     const next = [item, ...messages];
     setMessages(next);
     setText('');
     try {
       const { Preferences } = await import('@capacitor/preferences');
       await Preferences.set({ key: 'messages', value: JSON.stringify(next) });
-      if (firebaseAvailable()) {
-        const { value: dv } = await Preferences.get({ key: 'deviceId' });
-        let deviceId = dv || '';
-        if (!deviceId) {
-          deviceId = String(Date.now()) + '-' + Math.random().toString(36).slice(2);
-          await Preferences.set({ key: 'deviceId', value: deviceId });
-        }
+      
+      const { value: dv } = await Preferences.get({ key: 'deviceId' });
+      let deviceId = dv || '';
+      if (!deviceId) {
+        deviceId = String(Date.now()) + '-' + Math.random().toString(36).slice(2);
+        await Preferences.set({ key: 'deviceId', value: deviceId });
+      }
+
+      // Usar MongoDB Atlas para salvar mensagem
+      try {
         await saveMessage(deviceId, t);
+      } catch (e) {
+        // Fallback para API direta
+        try {
+          await saveMessageApi(deviceId, t);
+        } catch { /* ignore api errors */ }
       }
     } catch { /* ignore */ }
   };

@@ -1,7 +1,8 @@
 import { IonContent, IonHeader, IonPage, IonTitle, IonToolbar, IonModal, IonButtons, IonButton, IonIcon } from '@ionic/react';
 import { heartOutline, heart } from 'ionicons/icons';
-import { firebaseAvailable, saveFavorite, removeFavorite } from '../firebase';
-import { fetchVideosFromFirestore, firebaseAvailable } from '../firebase';
+import { saveFavorite, removeFavorite, fetchVideosFromFirestore, saveVideoMetadata, uploadDataUrlAsFile } from '../firebase';
+import { fetchVideosFromApi, saveFavoriteApi, removeFavoriteApi } from '../api';
+import { generateThumbnailFromVideoUrl } from '../utils/videoThumbnail';
 
 import React from 'react';
 import './Galeria.css';
@@ -56,50 +57,125 @@ const MOCK_VIDEOS: Video[] = [
 
 const Galeria: React.FC = () => {
     
-  const [videos, setVideos] = React.useState<Video[]>(MOCK_VIDEOS);
+  const [videos, setVideos] = React.useState<Video[]>([]);
   const [selectedVideo, setSelectedVideo] = React.useState<Video | null>(null);
   const [favoriteIds, setFavoriteIds] = React.useState<Set<string>>(new Set());
 
   React.useEffect(() => {
     (async () => {
-
-      // try load from Firestore as well when configured
+      // Carregar apenas vídeos do MongoDB Atlas
       try {
-        if (firebaseAvailable()) {
-          const remote = await fetchVideosFromFirestore();
-          if (remote && remote.length) {
-            const mapped: Video[] = remote.map(r => ({ id: r.id, title: r.title, thumb: r.thumbUrl, publishedAt: r.publishedAt, media: r.mediaUrl }));
-            setVideos(prev => [...mapped, ...prev]);
-          }
+        const remote = await fetchVideosFromFirestore();
+        if (remote && remote.length) {
+          const mapped: Video[] = await Promise.all(remote.map(async (r) => {
+            let thumbUrl = r.thumbUrl || '';
+            
+            // Se não tem thumbnail mas tem vídeo, gerar uma automaticamente
+            if (!thumbUrl && r.mediaUrl) {
+              try {
+                const thumbDataUrl = await generateThumbnailFromVideoUrl(r.mediaUrl);
+                if (thumbDataUrl) {
+                  try {
+                    // Fazer upload da thumbnail gerada
+                    thumbUrl = await uploadDataUrlAsFile(r.id || `thumb-${r.publishedAt}`, thumbDataUrl, 'png');
+                    
+                    // Atualizar o vídeo no MongoDB com a nova thumbnail
+                    await saveVideoMetadata({
+                      id: r.id || '',
+                      title: r.title,
+                      thumbUrl: thumbUrl,
+                      mediaUrl: r.mediaUrl,
+                      publishedAt: r.publishedAt
+                    });
+                  } catch (e) {
+                    console.warn('Erro ao salvar thumbnail gerada:', e);
+                  }
+                }
+              } catch (e) {
+                console.warn('Erro ao gerar thumbnail:', e);
+              }
+            }
+            
+            return {
+              id: r.id || `remote-${r.publishedAt}-${Math.random()}`, 
+              title: r.title, 
+              thumb: thumbUrl, 
+              publishedAt: r.publishedAt, 
+              media: r.mediaUrl 
+            };
+          }));
+          
+          // Remover duplicatas e ordenar por data
+          const uniqueVideos = Array.from(
+            new Map(mapped.map(v => [v.id, v])).values()
+          ).sort((a, b) => b.publishedAt - a.publishedAt);
+          setVideos(uniqueVideos);
+        } else {
+          // Se não houver vídeos no MongoDB, mostrar vazio
+          setVideos([]);
         }
       } catch (e) {
-        // ignore firebase errors
+        // Tenta fallback para API direta
+        try {
+          const remote = await fetchVideosFromApi();
+          if (remote && remote.length) {
+            const mapped: Video[] = await Promise.all(remote.map(async (r: any) => {
+              let thumbUrl = r.thumbUrl || r.thumb || '';
+              
+              // Se não tem thumbnail mas tem vídeo, gerar uma automaticamente
+              if (!thumbUrl && (r.mediaUrl || r.media)) {
+                try {
+                  const videoUrl = r.mediaUrl || r.media;
+                  const thumbDataUrl = await generateThumbnailFromVideoUrl(videoUrl);
+                  if (thumbDataUrl) {
+                    try {
+                      // Fazer upload da thumbnail gerada
+                      const videoId = r.id || r._id?.toString() || `api-${r.publishedAt}`;
+                      thumbUrl = await uploadDataUrlAsFile(videoId, thumbDataUrl, 'png');
+                      
+                      // Atualizar o vídeo no MongoDB com a nova thumbnail
+                      await saveVideoMetadata({
+                        id: videoId,
+                        title: r.title,
+                        thumbUrl: thumbUrl,
+                        mediaUrl: videoUrl,
+                        publishedAt: r.publishedAt
+                      });
+                    } catch (e) {
+                      console.warn('Erro ao salvar thumbnail gerada:', e);
+                    }
+                  }
+                } catch (e) {
+                  console.warn('Erro ao gerar thumbnail:', e);
+                }
+              }
+              
+              return {
+                id: r.id || r._id?.toString() || `api-${r.publishedAt}-${Math.random()}`, 
+                title: r.title, 
+                thumb: thumbUrl, 
+                publishedAt: r.publishedAt, 
+                media: r.mediaUrl || r.media 
+              };
+            }));
+            
+            const uniqueVideos = Array.from(
+              new Map(mapped.map(v => [v.id, v])).values()
+            ).sort((a, b) => b.publishedAt - a.publishedAt);
+            setVideos(uniqueVideos);
+          } else {
+            setVideos([]);
+          }
+        } catch (error) {
+          console.error('Erro ao carregar vídeos:', error);
+          setVideos([]);
+        }
       }
 
+      // Carregar favoritos salvos localmente (apenas para a lista de favoritos)
       try {
-
         const { Preferences } = await import('@capacitor/preferences');
-        const [{ value: savedVideosValue }, { value: favValue }] = await Promise.all([
-          Preferences.get({ key: 'videos' }),
-          Preferences.get({ key: 'favorites' })
-        ]);
-
-        if (savedVideosValue) {
-
-          const saved = JSON.parse(savedVideosValue) as any[];
-          
-          const savedVideos: Video[] = saved.map(s => ({
-            id: s.id,
-            title: s.title,
-            thumb: s.thumb || '',
-            publishedAt: s.createdAt || Date.now(),
-            media: s.media || ''
-          }));
-
-          setVideos(prev => [...savedVideos, ...prev]);
-
-        }
-
+        const { value: favValue } = await Preferences.get({ key: 'favorites' });
         if (favValue) {
           try {
             const favs: string[] = JSON.parse(favValue);
@@ -109,7 +185,6 @@ const Galeria: React.FC = () => {
       } catch (e) {
         // ignore
       }
-
     })();
   }, []);
 
@@ -131,19 +206,29 @@ const Galeria: React.FC = () => {
       const map: Record<string, Video> = value ? JSON.parse(value) : {};
       map[video.id] = video;
       await Preferences.set({ key: 'favoriteItems', value: JSON.stringify(map) });
-      // sync Firebase when disponível
-      if (firebaseAvailable()) {
-        const { value: dv } = await Preferences.get({ key: 'deviceId' });
-        let deviceId = dv || '';
-        if (!deviceId) {
-          deviceId = String(Date.now()) + '-' + Math.random().toString(36).slice(2);
-          await Preferences.set({ key: 'deviceId', value: deviceId });
-        }
+      // sincroniza com backend disponível (Firebase ou API Atlas)
+      const { value: dv } = await Preferences.get({ key: 'deviceId' });
+      let deviceId = dv || '';
+      if (!deviceId) {
+        deviceId = String(Date.now()) + '-' + Math.random().toString(36).slice(2);
+        await Preferences.set({ key: 'deviceId', value: deviceId });
+      }
+      // Usar MongoDB Atlas para favoritos
+      try {
         if (next.has(video.id)) {
           await saveFavorite(deviceId, { userId: deviceId, videoId: video.id, title: video.title, thumbUrl: video.thumb, mediaUrl: video.media, publishedAt: video.publishedAt });
         } else {
           await removeFavorite(deviceId, video.id);
         }
+      } catch (e) {
+        // Fallback para API direta
+        try {
+          if (next.has(video.id)) {
+            await saveFavoriteApi({ userId: deviceId, videoId: video.id, title: video.title, thumbUrl: video.thumb, mediaUrl: video.media, publishedAt: video.publishedAt });
+          } else {
+            await removeFavoriteApi(deviceId, video.id);
+          }
+        } catch { /* ignore */ }
       }
     } catch { /* ignore */ }
   };
@@ -165,7 +250,13 @@ const Galeria: React.FC = () => {
         <div className="video-list">
           {videos.map((v) => (
             <div className="video-card" key={v.id} onClick={() => openVideo(v)} role="button" tabIndex={0}>
-              <img className="video-thumb" src={v.thumb} alt={v.title} />
+              {v.thumb ? (
+                <img className="video-thumb" src={v.thumb} alt={v.title} />
+              ) : (
+                <div className="video-thumb" style={{ backgroundColor: '#ccc', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#666' }}>
+                  Sem imagem
+                </div>
+              )}
               <div className="video-meta">
                 <div className="video-title">{v.title}</div>
                 <div className="video-date">Publicado em {formatDate(v.publishedAt)}</div>
@@ -187,10 +278,16 @@ const Galeria: React.FC = () => {
             {selectedVideo && (
               <div className="player-wrap">
                 {/* video simplificado: autoPlay muted para aumentar chance de reprodução automática */}
-                <video className="player-video" controls playsInline muted autoPlay poster={selectedVideo.thumb} preload="auto">
-                  <source src={selectedVideo.media} type="video/mp4" />
-                  Seu navegador não suporta o elemento de vídeo.
-                </video>
+                {selectedVideo.media ? (
+                  <video className="player-video" controls playsInline muted autoPlay poster={selectedVideo.thumb || undefined} preload="auto">
+                    <source src={selectedVideo.media} type="video/mp4" />
+                    Seu navegador não suporta o elemento de vídeo.
+                  </video>
+                ) : (
+                  <div style={{ padding: 40, textAlign: 'center', backgroundColor: '#000', color: '#fff' }}>
+                    Vídeo não disponível
+                  </div>
+                )}
                 <div style={{ padding: 12 }}>
                   <div style={{ fontWeight: 700 }}>{selectedVideo.title}</div>
                   <div style={{ color: 'var(--ion-color-medium)', marginTop: 6 }}>Publicado em {formatDate(selectedVideo.publishedAt)}</div>
